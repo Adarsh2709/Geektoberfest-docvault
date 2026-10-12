@@ -139,6 +139,56 @@ def download_document(request: Request, doc_id: int, db: Session = Depends(get_d
         media_type=doc.content_type
     )
 
+@router.post("/bulk-delete", response_model=schemas.BulkDeleteResponse)
+def bulk_delete_documents(
+    request: Request,
+    payload: schemas.BulkDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    deleted_ids = []
+    failed = []
+
+    for doc_id in payload.document_ids:
+        doc = db.query(models.Document).filter(models.Document.id == doc_id).first()
+        if not doc:
+            failed.append(schemas.BulkDeleteFailure(id=doc_id, reason="Document not found"))
+            continue
+
+        if doc.owner_id != current_user.id:
+            failed.append(schemas.BulkDeleteFailure(id=doc_id, reason="Access denied"))
+            continue
+
+        doc_name = doc.original_filename
+        if os.path.exists(doc.file_path):
+            try:
+                os.remove(doc.file_path)
+            except OSError:
+                pass
+
+        db.delete(doc)
+        db.flush()
+
+        log_event(
+            db,
+            user_id=current_user.id,
+            action="bulk_delete",
+            target_type="document",
+            target_id=doc_id,
+            target_name=doc_name,
+            ip_address=request.client.host if request.client else None,
+        )
+        deleted_ids.append(doc_id)
+
+    db.commit()
+
+    return schemas.BulkDeleteResponse(
+        deleted_ids=deleted_ids,
+        failed=failed,
+        total_requested=len(payload.document_ids),
+        total_deleted=len(deleted_ids),
+    )
+
 @router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(request: Request, doc_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     doc = db.query(models.Document).filter(

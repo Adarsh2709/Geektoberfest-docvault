@@ -43,6 +43,19 @@ class DocumentResponse(DocumentBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+class BulkDeleteRequest(BaseModel):
+    document_ids: list[int]
+
+class BulkDeleteFailure(BaseModel):
+    id: int
+    reason: str
+
+class BulkDeleteResponse(BaseModel):
+    deleted_ids: list[int]
+    failed: list[BulkDeleteFailure]
+    total_requested: int
+    total_deleted: int
+
 # Folder Schemas
 class FolderBase(BaseModel):
     name: str

@@ -4,6 +4,7 @@ import api,{
   getFolders,
   uploadDocument,
   deleteDocument,
+  bulkDeleteDocuments,
   createFolder,
   renameFolder,
   deleteFolder,
@@ -63,7 +64,10 @@ function App() {
   const [uploadFile, setUploadFile] = useState(null);
   const [error, setError] = useState("");
   const [sortBy, setSortBy] = useState("date_desc");
-  const [selectedFileType, setSelectedFileType] = useState("all");
+  const [selectedDocIds, setSelectedDocIds] = useState(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState("");
 
   // Audit log state
   const [auditLogs, setAuditLogs] = useState([]);
@@ -192,10 +196,68 @@ function App() {
   const handleDeleteDoc = async (id) => {
     try {
       await deleteDocument(id);
+      setSelectedDocIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       fetchDocuments();
     } catch (err) {
       console.error(err);
       setError("Failed to delete document");
+    }
+  };
+
+  const toggleDocSelection = (id) => {
+    setSelectedDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const visibleIds = filteredDocuments.map((d) => d.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedDocIds.has(id));
+    if (allSelected) {
+      setSelectedDocIds((prev) => {
+        const next = new Set(prev);
+        visibleIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    } else {
+      setSelectedDocIds((prev) => {
+        const next = new Set(prev);
+        visibleIds.forEach((id) => next.add(id));
+        return next;
+      });
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedDocIds.size === 0) return;
+    setIsBulkDeleting(true);
+    setBulkMessage("");
+    try {
+      const res = await bulkDeleteDocuments(Array.from(selectedDocIds));
+      const { total_deleted, failed } = res.data;
+      if (failed && failed.length > 0) {
+        setBulkMessage(`Deleted ${total_deleted} document(s). Failed to delete ${failed.length} document(s).`);
+      } else {
+        setBulkMessage(`Successfully deleted ${total_deleted} document(s).`);
+      }
+      setSelectedDocIds(new Set());
+      setShowBulkDeleteConfirm(false);
+      fetchDocuments();
+    } catch (err) {
+      console.error(err);
+      setError(err.response?.data?.detail || "Failed to perform bulk deletion");
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -579,9 +641,50 @@ function App() {
               </div>
             </div>
 
+            {bulkMessage && (
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-blue-700 rounded-md text-sm flex justify-between items-center">
+                <span>{bulkMessage}</span>
+                <button onClick={() => setBulkMessage("")} className="text-blue-500 hover:text-blue-700 font-bold ml-2">✕</button>
+              </div>
+            )}
+
+            {selectedDocIds.size > 0 && (
+              <div className="mb-4 p-3 bg-indigo-50 border border-indigo-200 rounded-lg flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-indigo-900 text-sm">
+                    {selectedDocIds.size} {selectedDocIds.size === 1 ? "document" : "documents"} selected
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSelectedDocIds(new Set())}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition"
+                  >
+                    Deselect All
+                  </button>
+                  <button
+                    onClick={() => setShowBulkDeleteConfirm(true)}
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded hover:bg-red-700 transition flex items-center gap-1.5"
+                  >
+                    <FiTrash2 className="w-3.5 h-3.5" />
+                    Delete Selected
+                  </button>
+                </div>
+              </div>
+            )}
+
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-gray-50 border-b text-gray-600 text-sm">
+                  <th className="p-4 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={filteredDocuments.length > 0 && filteredDocuments.every((d) => selectedDocIds.has(d.id))}
+                      onChange={toggleSelectAll}
+                      aria-label="Select all visible documents"
+                      className="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer"
+                    />
+                  </th>
                   <th className="p-4 font-semibold">Filename</th>
                   <th className="p-4 font-semibold">Size</th>
                   <th className="p-4 font-semibold">Date</th>
@@ -591,7 +694,7 @@ function App() {
               <tbody>
                 {filteredDocuments.length === 0 ? (
                   <tr>
-                    <td colSpan="4" className="py-12 px-4 text-center">
+                    <td colSpan="5" className="py-12 px-4 text-center">
                       <div className="flex flex-col items-center justify-center text-gray-500">
                         <FiFile className="w-12 h-12 text-gray-300 mb-3" />
                         <h3 className="text-base font-semibold text-gray-700">No documents yet</h3>
@@ -609,8 +712,17 @@ function App() {
                   filteredDocuments.map((doc) => (
                     <tr
                       key={doc.id}
-                      className="border-b last:border-0 hover:bg-gray-50 transition-colors"
+                      className={`border-b last:border-0 hover:bg-gray-50 transition-colors ${selectedDocIds.has(doc.id) ? "bg-indigo-50/50" : ""}`}
                     >
+                      <td className="p-4 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedDocIds.has(doc.id)}
+                          onChange={() => toggleDocSelection(doc.id)}
+                          aria-label={`Select document ${doc.original_filename}`}
+                          className="h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer"
+                        />
+                      </td>
                       <td className="p-4 flex items-center gap-3 overflow-hidden">
                         <FiFile className="text-gray-400 text-xl flex-shrink-0" />
                         <span
@@ -742,6 +854,36 @@ function App() {
                 className="text-sm text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
               >
                 Refresh
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {showBulkDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">Confirm Bulk Deletion</h3>
+            <p className="text-sm text-gray-600 mb-6">
+              Are you sure you want to permanently delete{" "}
+              <strong className="text-gray-900">{selectedDocIds.size}</strong> selected{" "}
+              {selectedDocIds.size === 1 ? "document" : "documents"}? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                disabled={isBulkDeleting}
+                onClick={() => setShowBulkDeleteConfirm(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={isBulkDeleting}
+                onClick={handleBulkDelete}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 transition flex items-center gap-2"
+              >
+                {isBulkDeleting ? "Deleting..." : "Delete Permanently"}
               </button>
             </div>
           </div>
