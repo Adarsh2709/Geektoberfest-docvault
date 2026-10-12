@@ -36,6 +36,7 @@ export const uploadDocument = (formData) => api.post('/documents/upload', formDa
     'Content-Type': 'multipart/form-data'
   }
 });
+export const getDocumentDetails = (id) => api.get(`/documents/${id}`);
 export const deleteDocument = (id) => api.delete(`/documents/${id}`);
 export const searchDocuments = (q) => api.get(`/documents/search?q=${q}`);
 

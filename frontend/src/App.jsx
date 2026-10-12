@@ -4,6 +4,7 @@ import api,{
   getFolders,
   uploadDocument,
   deleteDocument,
+  getDocumentDetails,
   createFolder,
   renameFolder,
   deleteFolder,
@@ -25,6 +26,8 @@ import {
   FiLogOut,
   FiUser,
   FiShield,
+  FiInfo,
+  FiX,
 } from "react-icons/fi";
 
 function folderErrorMessage(err, fallback) {
@@ -63,7 +66,9 @@ function App() {
   const [uploadFile, setUploadFile] = useState(null);
   const [error, setError] = useState("");
   const [sortBy, setSortBy] = useState("date_desc");
-  const [selectedFileType, setSelectedFileType] = useState("all");
+  const [detailsDoc, setDetailsDoc] = useState(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [detailsError, setDetailsError] = useState("");
 
   // Audit log state
   const [auditLogs, setAuditLogs] = useState([]);
@@ -196,6 +201,21 @@ function App() {
     } catch (err) {
       console.error(err);
       setError("Failed to delete document");
+    }
+  };
+
+  const handleViewDetails = async (doc) => {
+    setDetailsDoc(doc);
+    setDetailsError("");
+    setLoadingDetails(true);
+    try {
+      const res = await getDocumentDetails(doc.id);
+      setDetailsDoc(res.data);
+    } catch (err) {
+      console.error(err);
+      setDetailsError(err.response?.data?.detail || "Failed to load document metadata");
+    } finally {
+      setLoadingDetails(false);
     }
   };
 
@@ -628,6 +648,14 @@ function App() {
                       </td>
                       <td className="p-4 text-right whitespace-nowrap">
                         <div className="flex justify-end gap-2">
+                          <button
+                            onClick={() => handleViewDetails(doc)}
+                            className="p-2 text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                            title="Document details & metadata"
+                            aria-label={`View details for ${doc.original_filename}`}
+                          >
+                            <FiInfo />
+                          </button>
                           <a
                             href={`${API_URL}/documents/${doc.id}/download?token=${token}`}
                             target="_blank"
@@ -742,6 +770,98 @@ function App() {
                 className="text-sm text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
               >
                 Refresh
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Document Metadata Details Modal ── */}
+      {detailsDoc && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
+            <div className="flex justify-between items-center mb-4 pb-3 border-b">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <FiInfo className="text-indigo-600" />
+                Document Details
+              </h3>
+              <button
+                onClick={() => setDetailsDoc(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded"
+                aria-label="Close details"
+              >
+                <FiX className="w-5 h-5" />
+              </button>
+            </div>
+
+            {detailsError && (
+              <div className="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded border border-red-200">
+                {detailsError}
+              </div>
+            )}
+
+            {loadingDetails ? (
+              <p className="text-center text-gray-500 py-8">Loading metadata...</p>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">
+                    Filename
+                  </span>
+                  <p className="text-sm font-medium text-gray-900 break-words mt-0.5">
+                    {detailsDoc.original_filename || "Untitled document"}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">
+                      File Size
+                    </span>
+                    <p className="text-sm font-semibold text-gray-800 mt-0.5">
+                      {detailsDoc.file_size
+                        ? `${(detailsDoc.file_size / 1024 / 1024).toFixed(2)} MB (${detailsDoc.file_size.toLocaleString()} bytes)`
+                        : "Unknown size"}
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">
+                      File Type / MIME
+                    </span>
+                    <p className="text-sm font-semibold text-gray-800 mt-0.5 truncate">
+                      {detailsDoc.content_type || "Unknown / Not specified"}
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">
+                      Upload Date
+                    </span>
+                    <p className="text-sm font-semibold text-gray-800 mt-0.5">
+                      {detailsDoc.created_at
+                        ? new Date(detailsDoc.created_at).toLocaleString()
+                        : "Unknown date"}
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">
+                      Location Folder
+                    </span>
+                    <p className="text-sm font-semibold text-gray-800 mt-0.5 truncate">
+                      {folders.find((f) => f.id === detailsDoc.folder_id)?.name || "Vault Root (No folder)"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6 pt-3 border-t flex justify-end">
+              <button
+                onClick={() => setDetailsDoc(null)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-200 transition"
+              >
+                Close
               </button>
             </div>
           </div>

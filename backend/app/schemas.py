@@ -28,8 +28,8 @@ class TokenData(BaseModel):
 class DocumentBase(BaseModel):
     filename: str
     original_filename: str
-    file_size: int
-    content_type: str
+    file_size: Optional[int] = 0
+    content_type: Optional[str] = None
     folder_id: Optional[int] = None
 
 class DocumentCreate(DocumentBase):

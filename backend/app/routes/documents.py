@@ -139,6 +139,19 @@ def download_document(request: Request, doc_id: int, db: Session = Depends(get_d
         media_type=doc.content_type
     )
 
+@router.get("/{doc_id}", response_model=schemas.DocumentResponse)
+def get_document_details(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    doc = db.query(models.Document).filter(models.Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this document")
+    return doc
+
 @router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(request: Request, doc_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     doc = db.query(models.Document).filter(
