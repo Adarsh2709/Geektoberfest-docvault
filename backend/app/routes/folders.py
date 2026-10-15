@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
+from ..access import get_owned_folder
 from .. import models, schemas, auth
 from ..database import get_db
 
@@ -28,10 +29,7 @@ def get_folders(db: Session = Depends(get_db), current_user: models.User = Depen
 
 @router.patch("/{folder_id}", response_model=schemas.FolderResponse)
 def rename_folder(folder_id: int, update: schemas.FolderUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    folder = db.query(models.Folder).filter(
-        models.Folder.id == folder_id,
-        models.Folder.owner_id == current_user.id
-    ).first()
+    folder = get_owned_folder(db, folder_id, current_user)
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found")
 
@@ -50,10 +48,7 @@ def rename_folder(folder_id: int, update: schemas.FolderUpdate, db: Session = De
 
 @router.delete("/{folder_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_folder(folder_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    folder = db.query(models.Folder).filter(
-        models.Folder.id == folder_id,
-        models.Folder.owner_id == current_user.id
-    ).first()
+    folder = get_owned_folder(db, folder_id, current_user)
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found")
     

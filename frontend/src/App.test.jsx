@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import * as api from "./api";
 
 vi.mock("./api", () => ({
-  getMe: vi.fn(), getFolders: vi.fn(), getDocuments: vi.fn(),
+  default: { get: vi.fn(), defaults: { baseURL: "https://api.test" } },
+  getMe: vi.fn(), getFolders: vi.fn(),
   createFolder: vi.fn(), renameFolder: vi.fn(), deleteFolder: vi.fn(),
   uploadDocument: vi.fn(), deleteDocument: vi.fn(), searchDocuments: vi.fn(),
   login: vi.fn(), register: vi.fn(),
@@ -16,7 +17,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   localStorage.setItem("token", "test-token");
   api.getMe.mockResolvedValue({ data: { username: "alice" } });
-  api.getDocuments.mockResolvedValue({ data: [] });
+  api.default.get.mockResolvedValue({ data: [] });
+  api.searchDocuments.mockResolvedValue({ data: [] });
   api.getFolders.mockResolvedValue({ data: [{ id: 1, name: "Reports" }] });
 });
 
@@ -123,5 +125,117 @@ describe("folder renaming", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(api.renameFolder).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Reports", exact: true })).toBeTruthy();
+  });
+});
+
+
+function makeDocument(id, name, folder_id, content_type) {
+  return {
+    id, folder_id, original_filename: name, content_type, file_size: 1024,
+    created_at: "2026-10-01T00:00:00.000Z",
+  };
+}
+
+describe("document search clear", () => {
+  it("hides the clear control while the search is empty", async () => {
+    await openApp();
+    expect(screen.getByRole("textbox", { name: "Search documents" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Clear document search" })).toBeNull();
+  });
+
+  it("clears search, restores all documents without reloading, and allows a new search", async () => {
+    const fullList = [
+      makeDocument(10, "quarterly-report.pdf", 1, "application/pdf"),
+      makeDocument(11, "annual-budget.pdf", 1, "application/pdf"),
+    ];
+    const searchResult = makeDocument(12, "needle-match.txt", 1, "text/plain");
+    const afterClearSearch = makeDocument(13, "second-search.txt", 1, "text/plain");
+    api.default.get.mockResolvedValue({ data: fullList });
+    api.searchDocuments.mockImplementation((query) =>
+      Promise.resolve({ data: query === "needle" ? [searchResult] : query === "again" ? [afterClearSearch] : [] })
+    );
+
+    const user = await openApp();
+    const input = screen.getByRole("textbox", { name: "Search documents" });
+    await user.type(input, "needle");
+    expect(await screen.findByText("needle-match.txt")).toBeTruthy();
+    expect(screen.queryByText("quarterly-report.pdf")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Clear document search" }));
+    expect(await screen.findByText("quarterly-report.pdf")).toBeTruthy();
+    expect(screen.getByText("annual-budget.pdf")).toBeTruthy();
+    expect(screen.queryByText("needle-match.txt")).toBeNull();
+    await waitFor(() => expect(api.default.get).toHaveBeenLastCalledWith("/documents/"));
+    expect(input.value).toBe("");
+    expect(document.activeElement).toBe(input);
+    expect(api.getMe).toHaveBeenCalledTimes(1);
+
+    await user.type(input, "again");
+    expect(await screen.findByText("second-search.txt")).toBeTruthy();
+    expect(api.searchDocuments).toHaveBeenLastCalledWith("again");
+  });
+
+  it("restores the active file-type and folder results", async () => {
+    const report = makeDocument(20, "reports-q1.pdf", 1, "application/pdf");
+    const archive = makeDocument(21, "archive-q1.pdf", 2, "application/pdf");
+    const note = makeDocument(22, "reports-notes.txt", 1, "text/plain");
+    const searchHit = makeDocument(23, "search-hit.pdf", 1, "application/pdf");
+    api.default.get.mockImplementation((url) =>
+      Promise.resolve({ data: url.includes("file_type=pdf") ? [report, archive] : [report, archive, note] })
+    );
+    api.searchDocuments.mockResolvedValue({ data: [searchHit] });
+
+    const user = await openApp();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Type:" }), "pdf");
+    expect(await screen.findByText("archive-q1.pdf")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Reports", exact: true }));
+    const input = screen.getByRole("textbox", { name: "Search documents" });
+    await user.type(input, "hit");
+    expect(await screen.findByText("search-hit.pdf")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Clear document search" }));
+    expect(await screen.findByText("reports-q1.pdf")).toBeTruthy();
+    expect(screen.queryByText("archive-q1.pdf")).toBeNull();
+    expect(screen.queryByText("reports-notes.txt")).toBeNull();
+    expect(screen.queryByText("search-hit.pdf")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Type:" }).value).toBe("pdf");
+    expect(screen.getByRole("button", { name: "Reports", exact: true }).className).toContain("bg-indigo-50");
+    expect(api.default.get).toHaveBeenLastCalledWith("/documents/?file_type=pdf");
+  });
+
+  it.each([
+    ["Enter", "{Enter}"],
+    ["Space", " "],
+  ])("clears the query with %s and returns focus to search", async (_key, activation) => {
+    const user = await openApp();
+    const input = screen.getByRole("textbox", { name: "Search documents" });
+    await user.type(input, "x");
+    const clear = await screen.findByRole("button", { name: "Clear document search" });
+    expect(clear.type).toBe("button");
+    await user.tab();
+    expect(document.activeElement).toBe(clear);
+    await user.keyboard(activation);
+    await waitFor(() => expect(input.value).toBe(""));
+    expect(document.activeElement).toBe(input);
+    expect(screen.queryByRole("button", { name: "Clear document search" })).toBeNull();
+  });
+
+  it("ignores a search response that arrives after the clear request", async () => {
+    const fullDocument = makeDocument(30, "current-list.pdf", 1, "application/pdf");
+    const staleDocument = makeDocument(31, "stale-search.pdf", 1, "application/pdf");
+    let resolveSearch;
+    api.default.get.mockResolvedValue({ data: [fullDocument] });
+    api.searchDocuments.mockImplementation(() => new Promise((resolve) => { resolveSearch = resolve; }));
+
+    const user = await openApp();
+    const input = screen.getByRole("textbox", { name: "Search documents" });
+    await user.type(input, "x");
+    await user.click(await screen.findByRole("button", { name: "Clear document search" }));
+    expect(await screen.findByText("current-list.pdf")).toBeTruthy();
+    await act(async () => {
+      resolveSearch({ data: [staleDocument] });
+    });
+    expect(screen.queryByText("stale-search.pdf")).toBeNull();
+    expect(screen.getByText("current-list.pdf")).toBeTruthy();
   });
 });

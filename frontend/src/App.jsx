@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
-import api,{
+import { useState, useEffect, useRef } from "react";
+import { formatFileSize } from "./formatFileSize.js";
+import api, {
   getDocuments,
   getFolders,
   uploadDocument,
@@ -21,6 +22,7 @@ import {
   FiFile,
   FiUpload,
   FiSearch,
+  FiX,
   FiFolderPlus,
   FiEdit2,
   FiLogOut,
@@ -53,6 +55,8 @@ function App() {
   const [documents, setDocuments] = useState([]);
   const [folders, setFolders] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef(null);
+  const latestDocumentRequest = useRef(0);
   const [selectedFolder, setSelectedFolder] = useState(null);
   const [newFolderName, setNewFolderName] = useState("");
   const [createFolderError, setCreateFolderError] = useState("");
@@ -63,6 +67,7 @@ function App() {
   const [renamingFolder, setRenamingFolder] = useState(false);
   const [uploadFile, setUploadFile] = useState(null);
   const [error, setError] = useState("");
+  const [uploadSuccess, setUploadSuccess] = useState("");
   const [sortBy, setSortBy] = useState("date_desc");
   const [selectedDocIds, setSelectedDocIds] = useState(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -73,6 +78,7 @@ function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [showAudit, setShowAudit] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
+
 
   useEffect(() => {
     if (token) {
@@ -99,13 +105,8 @@ function App() {
   // supporting both filter and sort query params
   const fetchDocuments = async () => {
     if (!token) return;
+    const requestId = ++latestDocumentRequest.current;
     try {
-      if (searchQuery) {
-        const res = await searchDocuments(searchQuery);
-        setDocuments(res.data);
-        return;
-      }
-
       const params = new URLSearchParams();
       if (selectedFileType && selectedFileType !== "all") {
         params.append("file_type", selectedFileType);
@@ -115,9 +116,12 @@ function App() {
       }
 
       const queryString = params.toString() ? `?${params.toString()}` : "";
-      const res = await api.get(`/documents/${queryString}`);
-      setDocuments(res.data);
+      const res = await (searchQuery
+        ? searchDocuments(searchQuery)
+        : api.get(`/documents/${queryString}`));
+      if (requestId === latestDocumentRequest.current) setDocuments(res.data);
     } catch (err) {
+      if (requestId !== latestDocumentRequest.current) return;
       console.error(err);
       setError("Failed to fetch documents");
     }
@@ -174,26 +178,45 @@ function App() {
   };
 
   const handleUpload = async (e) => {
-    e.preventDefault();
-    if (!uploadFile) return;
+  e.preventDefault();
+  setError("");
+  setUploadSuccess("");
 
-    const formData = new FormData();
-    formData.append("file", uploadFile);
-    if (selectedFolder) {
-      formData.append("folder_id", selectedFolder);
-    }
+  if (!uploadFile) {
+    setError("Please choose a file to upload first.");
+    return;
+  }
 
-    try {
-      await uploadDocument(formData);
-      setUploadFile(null);
-      fetchDocuments();
-    } catch (err) {
-      console.error(err);
-      setError(err.response?.data?.detail || "Upload failed");
-    }
-  };
+  const maxBytes = 10 * 1024 * 1024;
+  if (uploadFile.size > maxBytes) {
+    setError("File is too large. Maximum allowed size is 10MB.");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", uploadFile);
+  if (selectedFolder) {
+    formData.append("folder_id", selectedFolder);
+  }
+
+  try {
+    await uploadDocument(formData);
+    setUploadFile(null);
+    e.target.reset(); // clear input
+    setUploadSuccess("Document uploaded successfully!");
+    setTimeout(() => setUploadSuccess(""), 4000);
+    fetchDocuments();
+  } catch (err) {
+    console.error(err);
+    const message = err.response?.data?.detail || "Upload failed. Please check the file format and try again.";
+    setError(message);
+  }
+};
 
   const handleDeleteDoc = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this document?")) {
+      return;
+    }
     try {
       await deleteDocument(id);
       setSelectedDocIds((prev) => {
@@ -408,14 +431,30 @@ function App() {
           <FiFolder className="text-indigo-500" /> DocVault
         </h1>
         <div className="relative w-1/3">
-          <FiSearch className="absolute left-3 top-3 text-gray-400" />
+          <FiSearch aria-hidden="true" className="absolute left-3 top-3 text-gray-400" />
           <input
+            ref={searchInputRef}
             type="text"
+            aria-label="Search documents"
             placeholder="Search documents..."
-            className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full pl-10 pr-10 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
+          {searchQuery && (
+            <button
+              type="button"
+              aria-label="Clear document search"
+              onClick={() => {
+                latestDocumentRequest.current++;
+                setSearchQuery("");
+                searchInputRef.current?.focus();
+              }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-gray-400 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <FiX aria-hidden="true" />
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-4">
           {user && (
@@ -577,6 +616,15 @@ function App() {
             </div>
           )}
 
+          {uploadSuccess && (
+            <div className="bg-green-50 border-l-4 border-green-500 text-green-700 p-4 mb-6 rounded shadow-sm flex justify-between">
+              <p>{uploadSuccess}</p>
+              <button onClick={() => setUploadSuccess("")} className="font-bold">
+                &times;
+              </button>
+            </div>
+          )}
+
           <div className="bg-white p-6 rounded-xl shadow-sm border mb-6 flex justify-between items-center">
             <div>
               <h2 className="text-xl font-bold">Upload Document</h2>
@@ -733,7 +781,7 @@ function App() {
                         </span>
                       </td>
                       <td className="p-4 text-sm text-gray-500 whitespace-nowrap">
-                        {(doc.file_size / 1024 / 1024).toFixed(2)} MB
+                        {formatFileSize(doc.file_size)}
                       </td>
                       <td className="p-4 text-sm text-gray-500 whitespace-nowrap">
                         {new Date(doc.created_at).toLocaleDateString()}
@@ -741,7 +789,7 @@ function App() {
                       <td className="p-4 text-right whitespace-nowrap">
                         <div className="flex justify-end gap-2">
                           <a
-                            href={`${API_URL}/documents/${doc.id}/download?token=${token}`}
+                            href={`${api.defaults.baseURL}/documents/${doc.id}/download?token=${token}`}
                             target="_blank"
                             rel="noreferrer"
                             className="p-2 text-indigo-600 hover:bg-indigo-50 rounded transition-colors"

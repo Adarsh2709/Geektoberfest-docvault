@@ -8,6 +8,7 @@ import shutil
 from .. import models, schemas, auth
 from ..database import get_db
 from ..audit_logger import log_event
+from ..access import get_owned_document, get_owned_folder
 
 router = APIRouter()
 UPLOAD_DIR = "uploads"
@@ -32,10 +33,7 @@ def upload_document(
 
     # Check folder if provided
     if folder_id:
-        folder = db.query(models.Folder).filter(
-            models.Folder.id == folder_id,
-            models.Folder.owner_id == current_user.id
-        ).first()
+        folder = get_owned_folder(db, folder_id, current_user)
         if not folder:
             raise HTTPException(status_code=404, detail="Folder not found or you don't have access")
 
@@ -81,8 +79,15 @@ def get_documents(
     current_user: models.User = Depends(auth.get_current_user),
     file_type: Optional[str] = None,
     sort_by: Optional[str] = "date_desc",  # NEW
+    folder_id: Optional[int] = None,
 ):
     query = db.query(models.Document).filter(models.Document.owner_id == current_user.id)
+
+    # Folder filter: a folder you don't own is a 404, not an empty list
+    if folder_id is not None:
+        if not get_owned_folder(db, folder_id, current_user):
+            raise HTTPException(status_code=404, detail="Folder not found")
+        query = query.filter(models.Document.folder_id == folder_id)
 
     # File type filter
     if file_type and file_type.lower() != "all":
@@ -112,10 +117,7 @@ def search_documents(q: str, db: Session = Depends(get_db), current_user: models
 
 @router.get("/{doc_id}/download")
 def download_document(request: Request, doc_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    doc = db.query(models.Document).filter(
-        models.Document.id == doc_id,
-        models.Document.owner_id == current_user.id
-    ).first()
+    doc = get_owned_document(db, doc_id, current_user)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -191,10 +193,7 @@ def bulk_delete_documents(
 
 @router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(request: Request, doc_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    doc = db.query(models.Document).filter(
-        models.Document.id == doc_id,
-        models.Document.owner_id == current_user.id
-    ).first()
+    doc = get_owned_document(db, doc_id, current_user)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 

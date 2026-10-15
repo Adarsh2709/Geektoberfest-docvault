@@ -20,6 +20,7 @@ The frontend is deployed on Vercel, and the FastAPI backend is hosted on Render.
 
 - **User Authentication:** Register and log in securely with JWT
 - Upload and manage personal documents (up to 10MB)
+- Readable document sizes in B, KB, or MB using 1024-based units (up to two decimal places, without trailing zeros); zero-byte files show `0 B` and invalid sizes show `Unknown`
 - Documents and folders are completely private to the owner
 - Download documents
 - Delete documents
@@ -35,7 +36,7 @@ The frontend is deployed on Vercel, and the FastAPI backend is hosted on Render.
 ## Requirements
 
 - Python 3.11+
-- Node.js (v18+ recommended)
+- Node.js 22.12+ (or Node.js 20.x starting at 20.19)
 - PostgreSQL
 
 ## Setup Instructions
@@ -115,6 +116,22 @@ app, open the **Audit Log** panel from the header.
 Run `alembic upgrade head` to create the new `audit_logs` table. Share creation
 and revocation events will be added together with the document sharing feature.
 
+## Folder and document permissions
+
+Each folder and document has one owner. Only the owner can list, download,
+delete, rename or upload into a folder, and every route applies the same check.
+
+| Level  | Who has it          | Allows                                                        |
+|--------|---------------------|---------------------------------------------------------------|
+| Owner  | The user who created the folder or uploaded the document | List, download, delete, rename, upload into the folder |
+| None   | Every other user    | Nothing. The API returns `404`, the same as for an ID that does not exist |
+
+A document can only be placed in a folder its owner controls. Changing a document
+or folder ID in a request does not grant access. `GET /documents/?folder_id=`
+returns only that folder's documents and returns `404` for a folder you do not
+own. Sharing levels such as read or write are not available yet and will be added
+with document sharing.
+
 ## Running tests
 
 From `backend`, with your virtual environment activated:
@@ -134,6 +151,17 @@ npm install
 npm test
 npm run lint
 npm run build
+```
+
+## Frontend Checks
+
+From the repository root:
+
+```bash
+npm ci --prefix frontend
+node --test frontend/src/formatFileSize.test.js
+npm run build --prefix frontend
+npm run lint --prefix frontend
 ```
 
 ## Contributing
